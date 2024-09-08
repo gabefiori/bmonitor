@@ -2,9 +2,14 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/bmonitor/database"
+	"github.com/fermyon/spin/sdk/go/v2/variables"
 )
 
 func Handle(w http.ResponseWriter, r *http.Request) {
@@ -29,22 +34,49 @@ func withDefaultMiddlewares(h http.Handler, private bool) http.Handler {
 }
 
 func handleInsertMetric(w http.ResponseWriter, r *http.Request) {
-	url := r.URL.Query().Get("url")
+	urlParam := r.URL.Query().Get("url")
 
-	if url == "" {
-		http.Error(w, "Bad param 'url'", http.StatusBadRequest)
+	if err := validateUrl(urlParam); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	db := database.New()
 	defer db.Close()
 
-	if err := database.InsertMetric(db, url); err != nil {
+	if err := database.InsertMetric(db, urlParam); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+func validateUrl(urlParam string) error {
+	if urlParam == "" {
+		return errors.New("Bad param 'url'")
+	}
+
+	if _, err := url.ParseRequestURI(urlParam); err != nil {
+		return errors.New(fmt.Sprintf("Invalid 'url' format '%s'", urlParam))
+	}
+
+	allowedOrigins, err := variables.Get("cors_allowed_origins")
+
+	if err != nil {
+		return err
+	}
+
+	if allowedOrigins == "*" {
+		return nil
+	}
+
+	// NOTE: Assuming only one origin
+	if !strings.Contains(urlParam, allowedOrigins) {
+		return errors.New(fmt.Sprintf("Not allowed 'url' '%s'", urlParam))
+	}
+
+	return nil
 }
 
 func handleRetriveMetrics(w http.ResponseWriter, r *http.Request) {
